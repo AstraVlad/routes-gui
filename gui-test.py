@@ -2,6 +2,16 @@ import PySimpleGUI as sg
 import os
 from pathlib import Path
 import openpyxl
+from typing import NamedTuple
+
+
+class ShadowList(NamedTuple):
+    checkboxes: list
+    source_items: list
+    target_items: list
+    ok_marks: list
+    source_files: list
+    target_files: list
 
 
 class Defaults:
@@ -128,46 +138,62 @@ def l_footer():
 
 
 def read_files_list(rpath: Path, epath: Path):
-    rlist: list = rpath.glob('*.xlsx')
-    elist: list = epath.glob('*.xlsx')
+    rlist = [Path(file).name.replace(ROUTES_PREFIX, '')
+             for file in sorted(rpath.glob('*.xlsx')) if not Path(file).name.startswith('~')]
+    elist = [Path(file).name.replace(ECONOMY_PREFIX, '')
+             for file in sorted(epath.glob('*.xlsx')) if not Path(file).name.startswith('~')]
     return (rlist, elist)
 
 
-def files_panel(rlist, elist):
-    files1 = [Path(file).name.replace(ROUTES_PREFIX, '')
-              for file in sorted(rlist) if not Path(file).name.startswith('~')]
-    files2 = [Path(file).name.replace(ECONOMY_PREFIX, '')
-              for file in sorted(elist) if not Path(file).name.startswith('~')]
-    max_lenght = max(len(files1), len(files2))
-    files1.append(NO_MATCHING_FILE)
-    files2.append(NO_MATCHING_FILE)
-    result = []
-
-    for i in range(max_lenght):
-        row = ['', '', '', sg.T('X', text_color='red', key=(OK_TEXT_KEY, i))]
-        if i < len(files1):
-            row[1] = sg.Combo(
-                values=files1, default_value=files1[i], key=(ROUTES_COMBO_KEY, i), enable_events=True, readonly=True)
-            if files1[i] in files2:
-                row[0] = sg.Checkbox(
-                    text='Перенести', key=(CHECKBOX_KEY, i), default=True)
-                row[2] = sg.Combo(
-                    values=files2, default_value=files2[files2.index(files1[i])], key=(ECONOMY_COMBO_KEY, i), enable_events=True, readonly=True)
-                row[3] = sg.Text('OK', text_color='green', font=(
-                    WINOW_FONT[0], WINOW_FONT[1], 'bold'), key=(OK_TEXT_KEY, i))
-            else:
-                row[0] = sg.Checkbox(
-                    text='Перенести', key=(CHECKBOX_KEY, i), disabled=True)
-                row[2] = sg.Combo(
-                    values=files2, default_value=files2[-1], key=(ECONOMY_COMBO_KEY, i), readonly=True, enable_events=True)
+def make_files_panel_shadow_list(lists: tuple):
+    sources = [*lists[0]]
+    targets = [*lists[1]]
+    checkboxes = []
+    source_items = []
+    target_items = []
+    ok_marks = []
+    for file in sources:
+        source_items.append(file)
+        if file in targets:
+            target_items.append(file)
+            targets.remove(file)
+            checkboxes.append(True)
+            ok_marks.append(True)
         else:
-            row[0] = sg.Checkbox(
-                text='Перенести', key=(CHECKBOX_KEY, i), disabled=True)
-            row[1] = sg.Combo(
-                values=files1, default_value=files1[-1], key=(ROUTES_COMBO_KEY, i), readonly=True, enable_events=True)
-            row[2] = sg.Combo(
-                values=files2, default_value=files2[files2[i]], key=(ECONOMY_COMBO_KEY, i), readonly=True, enable_events=True)
-        result.append(row)
+            target_items.append(NO_MATCHING_FILE)
+            checkboxes.append(False)
+            ok_marks.append(False)
+    for file in targets:
+        source_items.append(NO_MATCHING_FILE)
+        target_items.append(file)
+        checkboxes.append(False)
+        ok_marks.append(False)
+    return ShadowList(checkboxes, source_items, target_items, ok_marks,
+                      lists[0]+[NO_MATCHING_FILE], lists[1]+[NO_MATCHING_FILE])
+
+
+def files_panel(shadow_list: ShadowList):
+    checkbox_col = [[sg.Text('')]]
+    sources_col = [[sg.Text('Файлы маршрутов')]]
+    targets_col = [[sg.Text('Файлы экономики')]]
+    ok_col = [[sg.Text('')]]
+    for index, checkbox in enumerate(shadow_list.checkboxes):
+        checkbox_col.append([sg.Checkbox(
+            text='Перенести', key=(CHECKBOX_KEY, index), default=checkbox, disabled=not checkbox, enable_events=True)])
+        sources_col.append([sg.Combo(
+            values=shadow_list.source_files, default_value=shadow_list.source_items[index],
+            key=(ROUTES_COMBO_KEY, index), enable_events=True, readonly=True)])
+        targets_col.append([sg.Combo(
+            values=shadow_list.target_files, default_value=shadow_list.target_items[index],
+            key=(ECONOMY_COMBO_KEY, index), enable_events=True, readonly=True)])
+        ok_col.append([sg.Text('OK', text_color='green', font=(WINOW_FONT[0], WINOW_FONT[1], 'bold'), key=(
+            OK_TEXT_KEY, index)) if checkbox else sg.Text('X', text_color='red', key=(OK_TEXT_KEY, index))])
+    result = [
+        [sg.Column(checkbox_col),
+         sg.Column(sources_col),
+         sg.Column(targets_col),
+         sg.Column(ok_col)]
+    ]
     return result
 
 
@@ -176,53 +202,83 @@ def find_duplicates(values_list):
     res = {}
     for index, value in enumerate(values_list):
         if value in seen:
-            print(value, res[value])
-            res[value] = res[value]+[index]
+            res[value] = res[value]+1 if value in res else 2
         else:
             seen.add(value)
-            res[value] = [index]
-            print(res)
+            # res[value] = [index]
+    if res:
+        del res[NO_MATCHING_FILE]
     return res
 
 
 def make_window():
-    rlist, elist = read_files_list(Path(ROUTES_FULL_PATH), Path(
-        ECONOMY_FULL_PATH))
+    shadow_list = make_files_panel_shadow_list(
+        read_files_list(Path(ROUTES_FULL_PATH), Path(ECONOMY_FULL_PATH)))
     layout = l_header() + [[sg.Frame('Перенос параметров сети:',
-                                     files_panel(rlist, elist),
+                                     files_panel(shadow_list),
                                      key=FRAME_ID)]] + l_footer()
     window = sg.Window('Переносим данные', layout, resizable=True,
                        use_ttk_buttons=False, font=WINOW_FONT,
                        # use_custom_titlebar=True,
                        finalize=True)
-    return window
+    return (shadow_list, window)
 
 
 def main():
     # Create the Window
-    window = make_window()
-
+    shadow_list, window = make_window()
+    window[TRANSFER_BUTTON_KEY].update(
+        disabled=not (True in shadow_list.checkboxes))
     # Event Loop to process "events" and get the "values" of the inputs
     while True:
         event, values = window.read()
         # if user closes window or clicks cancel
         if event in [sg.WIN_CLOSED, EXIT_BUTTON_KEY]:
             break
-        if event == ADD_ID:
-            # window.extend_layout(window[FRAME_ID], [
-            #                     [sg.T('New one'), sg.T('New two')]])
-            print(values[(ROUTES_COMBO_KEY, 1)])
         if isinstance(event, tuple):
+            index = event[1]
             not_matching = not (values[
-                (ROUTES_COMBO_KEY, event[1])] != NO_MATCHING_FILE and values[
-                    (ECONOMY_COMBO_KEY, event[1])] != NO_MATCHING_FILE)
-            window[(CHECKBOX_KEY, event[1])].update(disabled=not_matching)
+                (ROUTES_COMBO_KEY, index)] != NO_MATCHING_FILE and values[
+                    (ECONOMY_COMBO_KEY, index)] != NO_MATCHING_FILE)
+            window[(CHECKBOX_KEY, index)].update(disabled=not_matching)
+            if not_matching:
+                window[(CHECKBOX_KEY, index)].update(value=False)
             # window[TRANSFER_BUTTON_KEY].update(disabled=not_matching)
-            window[(OK_TEXT_KEY, event[1])].update(
+            window[(OK_TEXT_KEY, index)].update(
                 text_color='red' if not_matching else 'green',
                 value='X' if not_matching else 'OK',
                 font=(WINOW_FONT[0], WINOW_FONT[1], 'normal') if not_matching else (WINOW_FONT[0], WINOW_FONT[1], 'bold'))
-
+            shadow_list.checkboxes[index] = values[(
+                CHECKBOX_KEY, index)]
+            shadow_list.source_items[index] = values[(
+                ROUTES_COMBO_KEY, index)]
+            shadow_list.target_items[index] = values[(
+                ECONOMY_COMBO_KEY, index)]
+            shadow_list.ok_marks[index] = values[(
+                ROUTES_COMBO_KEY, index)]
+            window[TRANSFER_BUTTON_KEY].update(
+                disabled=not (True in shadow_list.checkboxes))
+            if duplicates := find_duplicates([item[1] if shadow_list.source_items[item[0]] != NO_MATCHING_FILE
+                                              else NO_MATCHING_FILE for item in enumerate(shadow_list.target_items)]):
+                err_layout = [[sg.Text('Внимание!')]]
+                for duplicate in duplicates:
+                    err_layout.append([sg.Text(
+                        f'Файл {duplicate} установлен в качестве цели для переноса файлов {duplicates[duplicate]} раза!')])
+                err_layout.append(
+                    [sg.Text('При каждом переносе данных предыдущие данные в файле перезаписываются!')])
+                err_layout.append([sg.OK()])
+                sg.Window('Внимание!', err_layout,
+                          font=WINOW_FONT).read(close=True)
+        if event == TRANSFER_BUTTON_KEY:
+            for index, checkbox in enumerate(shadow_list.checkboxes):
+                if checkbox:
+                    try:
+                        transfer_data(os.path.join(ROUTES_FULL_PATH, ROUTES_PREFIX+shadow_list.source_items[index]), os.path.join(
+                            ECONOMY_FULL_PATH, ECONOMY_PREFIX+shadow_list.target_items[index]))
+                    except Exception as err:
+                        sg.popup(
+                            f'При копировании данных из файла {ROUTES_PREFIX+shadow_list.source_items[index]} в {ECONOMY_PREFIX+shadow_list.target_items[index]} возникла ошибка {err}')
+            sg.popup('Данные скопированы успешно')
     window.close()
 
 
