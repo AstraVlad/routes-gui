@@ -4,6 +4,7 @@ from pathlib import Path
 import openpyxl
 from typing import NamedTuple
 import pandas as pd
+from pandas import DataFrame
 
 
 class ShadowList(NamedTuple):
@@ -21,6 +22,7 @@ class Defaults:
     ROUTES_AGGREGATE_RANGE = 'A4:AK9'
     ECONOMY_TARGET_CELL = 'B46'
     SKIP_ROWS_IN_TOTAL = 2
+    TARGET_ROWS_OFFSET = 22
 
 
 class Errors:
@@ -68,7 +70,7 @@ ECONOMY_FULL_PATH = os.path.join(BASE_DIR, ECONOMY_DIR)
 
 WINOW_FONT = ('Times', 14, 'normal')
 
-
+"""
 def copy_range(from_sheet, from_range: tuple[str, str], to_sheet, to_range: str):
 
     tcell = to_sheet[to_range]
@@ -77,21 +79,40 @@ def copy_range(from_sheet, from_range: tuple[str, str], to_sheet, to_range: str)
             tcell.offset(row=rindex, column=cindex).value = cell.value
     return True
 
+"""
+
+
+def copy_range(dataframe: DataFrame, to_sheet, to_range: str, row_offset=0, header=''):
+    tcell = to_sheet[to_range]
+    rindex = 0
+    if header != '':
+        tcell.offset(row=rindex+row_offset,
+                     column=0).value = header
+        rindex += 1
+    for row in dataframe.itertuples():
+        for cindex, value in enumerate(row):
+            tcell.offset(row=rindex+row_offset,
+                         column=cindex).value = value
+        rindex += 1
+    return True
+
 
 def transfer_data(from_filename, to_filename,
                   from_sheet_name=Defaults.ROUTES_SHEET_NAME,
                   to_sheet_name=Defaults.ECONOMY_SHEET_NAME,
                   from_range=Defaults.ROUTES_AGGREGATE_RANGE,
-                  to_range=Defaults.ECONOMY_TARGET_CELL):
-    from_workbook = openpyxl.load_workbook(
-        from_filename, read_only=True, data_only=True)
+                  to_range=Defaults.ECONOMY_TARGET_CELL,
+                  row_offset=Defaults.TARGET_ROWS_OFFSET):
+    # from_workbook = openpyxl.load_workbook(
+    #    from_filename, read_only=True, data_only=True)
     to_workbook = openpyxl.load_workbook(to_filename)
-    from_sheet = from_workbook[from_sheet_name]
+    # from_sheet = from_workbook[from_sheet_name]
     to_sheet = to_workbook[to_sheet_name]
     df = pd.read_excel(from_filename, from_sheet_name,
-                       skiprows=Defaults.SKIP_ROWS_IN_TOTAL)
+                       skiprows=Defaults.SKIP_ROWS_IN_TOTAL, index_col=0)
+    print(df)
     print(f'Перенос данных из файла {from_filename} в файл {to_filename}')
-    if copy_range(from_sheet, from_range, to_sheet, to_range):
+    if copy_range(df, to_sheet, to_range):
         to_workbook.save(to_filename)
         print('Успешно.')
         return True
